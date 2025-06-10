@@ -1,1 +1,1 @@
-"""Test package for market simulator.""" 
+"""Test package for market simulator."""
