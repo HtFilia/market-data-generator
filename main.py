@@ -1,130 +1,111 @@
 import os
-from typing import List, Optional, Union
+from typing import Optional, Union
 import click
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
+import pandas as pd
 
-from models.black_scholes import BlackScholesModel
-from calibration.correlation_engine import CorrelationEngine, Asset
-from calibration.synthetic_calibrator import SyntheticCalibrator
-from core.date_generator import BusinessDayGenerator
+from models.market_description import MarketDescription
+from models.factory import MarketModelFactory
 from outputs.csv_handler import CSVHandler
 from outputs.memory_handler import MemoryHandler
-
-# Predefined sectors and geographies
-SECTORS = ["Technology", "Healthcare", "Financial", "Energy", "Consumer"]
-GEOGRAPHIES = ["North_America", "Europe", "Asia", "Emerging"]
 
 # Type alias for output handlers
 OutputHandler = Union[CSVHandler, MemoryHandler]
 
 
-def create_assets(n_assets: int, seed: Optional[int] = None) -> List[Asset]:
-    """
-    Create synthetic assets with random sector and geography assignments.
-
-    Args:
-        n_assets: Number of assets to create
-        seed: Random seed for reproducibility
-
-    Returns:
-        List of Asset objects
-    """
-    if seed is not None:
-        np.random.seed(seed)
-
-    assets = []
-    for i in range(n_assets):
-        asset = Asset(
-            id=f"ASSET_{i+1:03d}",
-            sector=np.random.choice(SECTORS),
-            geography=np.random.choice(GEOGRAPHIES),
-        )
-        assets.append(asset)
-
-    return assets
-
-
 @click.command()
-@click.option("--assets", default=10, help="Number of assets to simulate")
-@click.option("--start-date", default="2023-01-01", help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", default="2023-12-31", help="End date (YYYY-MM-DD)")
+@click.option("--n-assets", default=10, help="Number of assets to simulate")
 @click.option(
-    "--model",
-    type=click.Choice(["black_scholes", "heston"]),
-    default="black_scholes",
-    help="Market model to use",
+    "--sectors",
+    multiple=True,
+    default=["Technology", "Finance", "Healthcare"],
+    help="List of sectors (can be specified multiple times)",
 )
+@click.option(
+    "--areas",
+    multiple=True,
+    default=["US", "EU", "Asia"],
+    help="List of geographical areas (can be specified multiple times)",
+)
+@click.option(
+    "--model-type", type=str, default="black_scholes", help="Market model to use"
+)
+@click.option("--days", type=int, default=252, help="Number of days to simulate")
 @click.option(
     "--output",
     type=click.Choice(["csv", "memory"]),
     default="csv",
     help="Output format",
 )
+@click.option(
+    "--output-path",
+    type=str,
+    default="data/simulation_results.csv",
+    help="Path to save results (for CSV output)",
+)
 @click.option("--seed", type=int, help="Random seed for reproducibility")
-@click.option("--corr-matrix-path", type=str, help="Path to save correlation matrix")
 def main(
-    assets: int,
-    start_date: str,
-    end_date: str,
-    model: str,
+    n_assets: int,
+    sectors: tuple[str, ...],
+    areas: tuple[str, ...],
+    model_type: str,
+    days: int,
     output: str,
+    output_path: str,
     seed: Optional[int],
-    corr_matrix_path: Optional[str],
 ) -> None:
     """
     Run the market simulator.
 
     Args:
-        assets: Number of assets to simulate
-        start_date: Start date (YYYY-MM-DD)
-        end_date: End date (YYYY-MM-DD)
-        model: Market model to use
+        n_assets: Number of assets to simulate
+        sectors: List of sectors
+        areas: List of geographical areas
+        model_type: Market model to use
+        days: Number of days to simulate
         output: Output format
+        output_path: Path to save results
         seed: Random seed for reproducibility
-        corr_matrix_path: Path to save correlation matrix
     """
-    # Parse dates
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
+    if seed is not None:
+        np.random.seed(seed)
 
-    # Create assets
-    assets_list = create_assets(assets, seed)
+    # Create market description (this will also create assets with their metadata)
+    market_description = MarketDescription(
+        n_assets=n_assets,
+        sectors=list(sectors),
+        geographical_areas=list(areas),
+        seed=seed,
+    )
 
-    # Generate business days
-    date_gen = BusinessDayGenerator()
-    dates = date_gen.generate_dates(start, end)
+    # Create factory and register models
+    factory = MarketModelFactory()
+    print(f"Available models: {factory.get_available_models()}")
 
-    # Generate correlation matrix
-    corr_engine = CorrelationEngine()
-    corr_matrix = corr_engine.create_matrix(assets_list, seed)
+    # Create and use models
+    market_model = factory.create_model(model_type, market_description)
 
-    # Save correlation matrix if requested
-    if corr_matrix_path:
-        np.save(corr_matrix_path, corr_matrix)
+    # Generate simulation dates
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    dates = pd.date_range(start=start_date, end=end_date, freq="B")
 
-    # Generate model parameters
-    calibrator = SyntheticCalibrator(seed=seed)
-    params = calibrator.generate_parameters(assets)
-    start_prices = calibrator.generate_start_prices(assets)
-
-    # Create and run model
-    if model == "black_scholes":
-        market_model = BlackScholesModel(params.__dict__)
-    else:
-        raise NotImplementedError(f"Model {model} not implemented yet")
-
-    # Simulate prices
-    prices = market_model.simulate_paths(start_prices, dates, corr_matrix, seed)
+    # Simulate paths
+    paths = market_model.simulate_paths(dates)
 
     # Save results
     handler: OutputHandler
     if output == "csv":
-        handler = CSVHandler(os.path.join("data", "simulation_results.csv"))
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        handler = CSVHandler(output_path)
     else:
         handler = MemoryHandler()
 
-    handler.save(dates, prices, [asset.__dict__ for asset in assets_list])
+    # Get asset metadata from market description
+    assets_metadata = market_description.get_asset_metadata()
+
+    handler.save(dates, paths, assets_metadata)
 
 
 if __name__ == "__main__":

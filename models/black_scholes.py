@@ -1,39 +1,83 @@
-from typing import Optional
+from typing import Optional, Type
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
 from .base import MarketModel
 
 
-class BlackScholesModel(MarketModel):
-    """Black-Scholes model implementation using Geometric Brownian Motion."""
+@dataclass
+class BlackScholesData(MarketModel.Data):
+    """Data structure for Black-Scholes model parameters."""
+
+    initial_prices: np.ndarray
+    volatility: np.ndarray
+    correlation_matrix: np.ndarray
+
+
+class BlackScholesModel(MarketModel[BlackScholesData]):
+    """
+    Black-Scholes model implementation.
+    """
+
+    model_name = "black_scholes"
+
+    class Calibrator(MarketModel.Calibrator[BlackScholesData]):
+        """Black-Scholes model calibrator."""
+
+        def calibrate(self) -> BlackScholesData:
+            """Calibrate the Black-Scholes model parameters."""
+            n_assets = self.market_description.n_assets
+
+            # Generate initial prices (log-normal distribution)
+            initial_prices = np.exp(np.random.normal(4, 1, n_assets))
+
+            # Generate constant volatility
+            volatility = np.random.uniform(0.1, 0.4, n_assets)
+
+            # Generate correlation matrix
+            # Start with random correlations
+            raw_corr = np.random.uniform(-0.3, 0.7, (n_assets, n_assets))
+            # Make it symmetric
+            raw_corr = (raw_corr + raw_corr.T) / 2
+            # Set diagonal to 1
+            np.fill_diagonal(raw_corr, 1.0)
+            # Ensure positive definiteness
+            correlation_matrix = self._make_positive_definite(raw_corr)
+
+            return BlackScholesData(
+                initial_prices=initial_prices,
+                volatility=volatility,
+                correlation_matrix=correlation_matrix,
+            )
+
+        def _make_positive_definite(self, matrix: np.ndarray) -> np.ndarray:
+            """Make a matrix positive definite by adjusting eigenvalues."""
+            eigenvalues, eigenvectors = np.linalg.eigh(matrix)
+            eigenvalues = np.maximum(eigenvalues, 1e-6)  # Ensure positive eigenvalues
+            return eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+
+    @classmethod
+    def get_calibrator_class(cls) -> Type[Calibrator]:
+        """Get the concrete calibrator class for this model."""
+        return cls.Calibrator
 
     def _validate_parameters(self) -> None:
         """Validate Black-Scholes model parameters."""
-        required_params = {"volatility", "drift", "risk_free_rate"}
-        if not all(param in self.parameters for param in required_params):
-            raise ValueError(f"Missing required parameters: {required_params}")
-
-        if not isinstance(self.parameters["volatility"], np.ndarray):
-            raise TypeError("Volatility must be a numpy array")
-        if not isinstance(self.parameters["drift"], np.ndarray):
-            raise TypeError("Drift must be a numpy array")
-        if not isinstance(self.parameters["risk_free_rate"], float):
-            raise TypeError("Risk-free rate must be a float")
+        if not isinstance(self._model_data, BlackScholesData):
+            raise ValueError("Invalid model data type")
+        if not np.all(self._model_data.volatility > 0):
+            raise ValueError("All volatilities must be positive")
 
     def simulate_paths(
         self,
-        start_prices: np.ndarray,
         dates: pd.DatetimeIndex,
-        correlation_matrix: np.ndarray,
         seed: Optional[int] = None,
     ) -> np.ndarray:
         """
-        Simulate price paths using Geometric Brownian Motion.
+        Simulate price paths using Black-Scholes model.
 
         Args:
-            start_prices: Array of initial prices for each asset
             dates: Array of dates to simulate
-            correlation_matrix: Correlation matrix between assets
             seed: Random seed for reproducibility
 
         Returns:
@@ -43,39 +87,37 @@ class BlackScholesModel(MarketModel):
             np.random.seed(seed)
 
         n_dates = len(dates)
-        n_assets = len(start_prices)
+        n_assets = len(self._model_data.initial_prices)
 
-        # Calculate time steps in years
-        dt = np.diff(dates.astype(np.int64)) / (365 * 24 * 60 * 60 * 1e9)
-        dt = np.insert(dt, 0, 0)  # Add initial time step of 0
+        # Handle empty dates by returning initial prices
+        if n_dates == 0:
+            return self._model_data.initial_prices.reshape(1, -1)
+
+        dt = 1 / 252  # Assuming daily simulation
 
         # Generate correlated Brownian motions
-        L = np.linalg.cholesky(correlation_matrix)
-        Z = np.random.normal(0, 1, (n_dates, n_assets))
-        dW = np.sqrt(dt[:, np.newaxis]) * (Z @ L.T)
+        z = np.random.normal(0, 1, (n_dates, n_assets))
+        z = z @ np.linalg.cholesky(self._model_data.correlation_matrix)
 
-        # Calculate drift and diffusion terms
-        drift = (
-            self.parameters["drift"] - 0.5 * self.parameters["volatility"] ** 2
-        ) * dt[:, np.newaxis]
-        diffusion = self.parameters["volatility"] * dW
+        # Simulate paths
+        paths = np.zeros((n_dates, n_assets))
+        paths[0] = self._model_data.initial_prices
 
-        # Simulate log returns
-        log_returns = drift + diffusion
+        for t in range(1, n_dates):
+            drift = -0.5 * self._model_data.volatility**2 * dt
+            diffusion = self._model_data.volatility * np.sqrt(dt)
+            paths[t] = paths[t - 1] * np.exp(drift + diffusion * z[t])
 
-        # Calculate prices
-        prices = start_prices * np.exp(np.cumsum(log_returns, axis=0))
-
-        return prices
+        return paths
 
     def get_volatility(self, t: float) -> np.ndarray:
         """
-        Get the constant volatility for each asset.
+        Get the volatility for each asset at time t.
 
         Args:
-            t: Time point (unused in Black-Scholes as volatility is constant)
+            t: Time point
 
         Returns:
-            Array of constant volatilities for each asset
+            Array of volatilities for each asset
         """
-        return self.parameters["volatility"]
+        return self._model_data.volatility

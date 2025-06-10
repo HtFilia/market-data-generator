@@ -1,20 +1,59 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Optional, Type, Generic, TypeVar
 import numpy as np
 import pandas as pd
 
+from .market_description import MarketDescription
 
-class MarketModel(ABC):
-    """Abstract base class for market models."""
+T = TypeVar("T")
+U = TypeVar("U")
 
-    def __init__(self, parameters: Dict[str, Any]):
+
+class MarketModel(Generic[T]):
+    """
+    Base class for market models.
+    Each model must implement its own Calibrator inner class.
+    """
+
+    model_name: str = ""  # Override this in subclasses to specify the model name
+
+    class Data(ABC):
+        """Abstract base class for market model data."""
+
+        pass
+
+    class Calibrator(Generic[U]):
+        """Base class for model calibrators."""
+
+        def __init__(self, market_description: MarketDescription):
+            self.market_description = market_description
+            self._calibration_data: Optional[U] = None
+
+        def calibrate(self) -> U:
+            """
+            Calibrate the model parameters.
+
+            Returns:
+                Model-specific calibration data
+            """
+            raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def get_calibrator_class(cls) -> Type["MarketModel.Calibrator"]:
+        """Get the concrete calibrator class for this model."""
+        pass
+
+    def __init__(self, market_description: MarketDescription):
         """
         Initialize the market model.
 
         Args:
-            parameters: Dictionary of model-specific parameters
+            market_description: Description of the market structure
         """
-        self.parameters = parameters
+        self.market_description = market_description
+        self.calibrator = self.get_calibrator_class()(market_description)
+        self._model_data = self.calibrator.calibrate()
         self._validate_parameters()
 
     @abstractmethod
@@ -25,18 +64,14 @@ class MarketModel(ABC):
     @abstractmethod
     def simulate_paths(
         self,
-        start_prices: np.ndarray,
         dates: pd.DatetimeIndex,
-        correlation_matrix: np.ndarray,
         seed: Optional[int] = None,
     ) -> np.ndarray:
         """
         Simulate price paths for multiple assets.
 
         Args:
-            start_prices: Array of initial prices for each asset
             dates: Array of dates to simulate
-            correlation_matrix: Correlation matrix between assets
             seed: Random seed for reproducibility
 
         Returns:
