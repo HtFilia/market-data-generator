@@ -1,4 +1,4 @@
-.PHONY: install test lint format clean
+.PHONY: install test lint format clean gui
 
 install:
 	python3 -m venv venv
@@ -24,4 +24,7 @@ clean:
 	find . -type d -name "*.egg-info" -exec rm -r {} +
 	find . -type d -name "*.egg" -exec rm -r {} +
 	find . -type d -name ".pytest_cache" -exec rm -r {} +
-	find . -type d -name ".mypy_cache" -exec rm -r {} + 
+	find . -type d -name ".mypy_cache" -exec rm -r {} +
+
+gui:
+	streamlit run visualization/visualizer.py 
