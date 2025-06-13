@@ -19,7 +19,19 @@ OutputHandler = Union[CSVHandler, MemoryHandler]
 @click.option(
     "--sectors",
     multiple=True,
-    default=["Technology", "Finance", "Healthcare"],
+    default=[
+        "Information Technology",
+        "Financials",
+        "Healthcare",
+        "Consumer Discretionary",
+        "Consumer Staples",
+        "Industrials",
+        "Materials",
+        "Energy",
+        "Utilities",
+        "Real Estate",
+        "Communication Services"
+    ],
     help="List of sectors (can be specified multiple times)",
 )
 @click.option(
@@ -81,11 +93,13 @@ def main(
 
     # Create factory and register models
     factory = MarketModelFactory()
-    print(f"Available models: {factory.get_available_models()}")
 
     # Create and use models
-    market_model = factory.create_model(model_type, market_description)
-
+    try:
+        market_model = factory.create_model(model_type, market_description)
+    except ValueError:
+        print(f"Available models: {factory.get_available_models()}")
+        return
     # Generate simulation dates
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
