@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 import click
 from datetime import datetime, timedelta
 import numpy as np
@@ -12,72 +12,82 @@ from outputs.memory_handler import MemoryHandler
 
 # Type alias for output handlers
 OutputHandler = Union[CSVHandler, MemoryHandler]
-
+OUTPUT_PATH = "data/simulation_results.csv"
 
 @click.command()
-@click.option("--n-assets", default=10, help="Number of assets to simulate")
+@click.option(
+    "--model",
+    type=click.Choice(["black_scholes", "heston", "custom"]),
+    default="black_scholes",
+    help="Market model to use. Available models: black_scholes (constant volatility), heston (stochastic volatility), custom (multi-factor stochastic volatility with jumps). Default: black_scholes"
+)
+@click.option(
+    "--days",
+    type=int,
+    default=252,
+    help="Number of days to simulate. Default: 252 (one trading year)"
+)
+@click.option(
+    "--assets",
+    type=int,
+    default=10,
+    help="Number of assets to simulate. Default: 10"
+)
 @click.option(
     "--sectors",
+    type=str,
     multiple=True,
-    default=[
-        "Information Technology",
-        "Financials",
+    default=(
+        "Technology",
         "Healthcare",
-        "Consumer Discretionary",
-        "Consumer Staples",
-        "Industrials",
-        "Materials",
+        "Financial",
+        "Consumer",
         "Energy",
+        "Materials",
+        "Industrials",
         "Utilities",
         "Real Estate",
-        "Communication Services"
-    ],
-    help="List of sectors (can be specified multiple times)",
+        "Communication",
+    ),
+    help="Sectors to include. Can be specified multiple times. Default: Technology, Healthcare, Financial, Consumer, Energy, Materials, Industrials, Utilities, Real Estate, Communication"
 )
 @click.option(
     "--areas",
+    type=str,
     multiple=True,
-    default=["US", "EU", "Asia"],
-    help="List of geographical areas (can be specified multiple times)",
+    default=("US", "EU", "Asia", "UK"),
+    help="Geographical areas to include. Can be specified multiple times. Default: US, EU, Asia, UK"
 )
 @click.option(
-    "--model-type", type=str, default="black_scholes", help="Market model to use"
+    "--seed",
+    type=Optional[int],
+    default=None,
+    help="Random seed for reproducibility. Default: None"
 )
-@click.option("--days", type=int, default=252, help="Number of days to simulate")
 @click.option(
     "--output",
     type=click.Choice(["csv", "memory"]),
     default="csv",
-    help="Output format",
+    help="Output format. Default: csv"
 )
-@click.option(
-    "--output-path",
-    type=str,
-    default="data/simulation_results.csv",
-    help="Path to save results (for CSV output)",
-)
-@click.option("--seed", type=int, help="Random seed for reproducibility")
 def main(
-    n_assets: int,
-    sectors: tuple[str, ...],
-    areas: tuple[str, ...],
-    model_type: str,
+    model: str,
     days: int,
+    assets: int,
+    sectors: Tuple[str, ...],
+    areas: Tuple[str, ...],
+    seed: int,
     output: str,
-    output_path: str,
-    seed: Optional[int],
 ) -> None:
     """
     Run the market simulator.
 
     Args:
-        n_assets: Number of assets to simulate
+        model: Market model to use
+        days: Number of days to simulate
+        assets: Number of assets to simulate
         sectors: List of sectors
         areas: List of geographical areas
-        model_type: Market model to use
-        days: Number of days to simulate
-        output: Output format
-        output_path: Path to save results
         seed: Random seed for reproducibility
     """
     if seed is not None:
@@ -85,7 +95,7 @@ def main(
 
     # Create market description (this will also create assets with their metadata)
     market_description = MarketDescription(
-        n_assets=n_assets,
+        n_assets=assets,
         sectors=list(sectors),
         geographical_areas=list(areas),
         seed=seed,
@@ -96,7 +106,7 @@ def main(
 
     # Create and use models
     try:
-        market_model = factory.create_model(model_type, market_description)
+        market_model = factory.create_model(model, market_description)
     except ValueError:
         print(f"Available models: {factory.get_available_models()}")
         return
@@ -111,8 +121,8 @@ def main(
     # Save results
     handler: OutputHandler
     if output == "csv":
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        handler = CSVHandler(output_path)
+        os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+        handler = CSVHandler(OUTPUT_PATH)
     else:
         handler = MemoryHandler()
 
