@@ -46,32 +46,32 @@ class CustomModel(MarketModel[CustomModelData]):
             # Generate initial prices (log-normal distribution)
             initial_prices = np.exp(np.random.normal(4, 1, n_assets))
 
-            # Generate initial volatility (v0)
-            initial_volatility = np.random.uniform(0.1, 0.3, n_assets)
+            # Generate initial volatility (v0) - increased range
+            initial_volatility = np.random.uniform(0.2, 0.5, n_assets)
 
-            # Generate long-term mean volatility (theta_v)
-            long_term_volatility = np.random.uniform(0.15, 0.35, n_assets)
+            # Generate long-term mean volatility (theta_v) - increased range
+            long_term_volatility = np.random.uniform(0.25, 0.45, n_assets)
 
-            # Generate mean reversion speed for prices (kappa)
-            mean_reversion_speed = np.random.uniform(0.5, 2.0, n_assets)
+            # Generate mean reversion speed for prices (kappa) - reduced to allow more persistence
+            mean_reversion_speed = np.random.uniform(0.2, 1.0, n_assets)
 
-            # Generate mean reversion speed for volatility (kappa_v)
-            mean_reversion_speed_vol = np.random.uniform(1.0, 3.0, n_assets)
+            # Generate mean reversion speed for volatility (kappa_v) - reduced to allow more persistence
+            mean_reversion_speed_vol = np.random.uniform(0.5, 2.0, n_assets)
 
-            # Generate volatility of volatility (sigma_v)
-            vol_of_vol = np.random.uniform(0.1, 0.4, n_assets)
+            # Generate volatility of volatility (sigma_v) - increased to allow more volatility spikes
+            vol_of_vol = np.random.uniform(0.2, 0.6, n_assets)
 
             # Generate long-term mean price level (theta)
             long_term_price = np.log(initial_prices) + np.random.uniform(-0.5, 0.5, n_assets)
 
-            # Generate market and sector factor loadings
-            market_beta = np.random.uniform(0.3, 0.7, n_assets)
-            sector_beta = np.random.uniform(0.2, 0.5, n_assets)
+            # Generate market and sector factor loadings - increased to allow larger market moves
+            market_beta = np.random.uniform(0.5, 1.0, n_assets)
+            sector_beta = np.random.uniform(0.3, 0.8, n_assets)
 
-            # Generate jump parameters
-            jump_intensity = np.random.uniform(0.01, 0.05, n_assets)  # 1-5 jumps per year
-            jump_mean = np.random.uniform(-0.02, -0.01, n_assets)
-            jump_std = np.random.uniform(0.01, 0.03, n_assets)
+            # Generate jump parameters - increased frequency and size
+            jump_intensity = np.random.uniform(0.05, 0.15, n_assets)  # 5-15 jumps per year
+            jump_mean = np.random.uniform(-0.05, -0.02, n_assets)  # Larger negative jumps
+            jump_std = np.random.uniform(0.02, 0.05, n_assets)  # Larger jump volatility
 
             # Generate correlation between price and volatility
             price_vol_correlation = np.random.uniform(-0.7, -0.3, n_assets)
@@ -160,7 +160,11 @@ class CustomModel(MarketModel[CustomModelData]):
         if n_dates == 0:
             return self._model_data.initial_prices.reshape(1, -1)
 
-        dt = 1 / 252  # Assuming daily simulation
+        # Calculate time steps using day count convention
+        dt = np.array([
+            self.market_description.day_count.year_fraction(dates[i-1], dates[i])
+            for i in range(1, n_dates)
+        ])
 
         # Generate correlated Brownian motions for prices
         z1 = np.random.normal(0, 1, (n_dates, n_assets))
@@ -171,8 +175,9 @@ class CustomModel(MarketModel[CustomModelData]):
         z2 = z2 @ np.linalg.cholesky(self._model_data.correlation_matrix)
 
         # Generate market and sector factors
-        market_factor = np.random.normal(0, np.sqrt(dt), n_dates)
-        sector_factor = np.random.normal(0, np.sqrt(dt), n_dates)
+        # Note: We only need factors for t=1 to t=n_dates-1 since we don't use them at t=0
+        market_factor = np.random.normal(0, np.sqrt(dt), n_dates-1)
+        sector_factor = np.random.normal(0, np.sqrt(dt), n_dates-1)
 
         # Combine Brownian motions with correlation
         z2 = (
@@ -194,12 +199,12 @@ class CustomModel(MarketModel[CustomModelData]):
             vol_drift = (
                 self._model_data.mean_reversion_speed_vol
                 * (self._model_data.long_term_volatility - volatility[t - 1])
-                * dt
+                * dt[t-1]
             )
             vol_diffusion = (
                 self._model_data.vol_of_vol
                 * np.sqrt(volatility[t - 1])
-                * np.sqrt(dt)
+                * np.sqrt(dt[t-1])
                 * z2[t]
             )
             volatility[t] = np.maximum(
@@ -210,20 +215,20 @@ class CustomModel(MarketModel[CustomModelData]):
             price_drift = (
                 self._model_data.mean_reversion_speed
                 * (self._model_data.long_term_price - log_prices[t - 1])
-                * dt
+                * dt[t-1]
             )
-            price_diffusion = np.sqrt(volatility[t]) * np.sqrt(dt) * z1[t]
+            price_diffusion = np.sqrt(volatility[t]) * np.sqrt(dt[t-1]) * z1[t]
             
             # Add market and sector factor contributions
             factor_contribution = (
-                self._model_data.market_beta * market_factor[t]
-                + self._model_data.sector_beta * sector_factor[t]
+                self._model_data.market_beta * market_factor[t-1]
+                + self._model_data.sector_beta * sector_factor[t-1]
             )
 
             # Generate jumps
             jumps = np.zeros(n_assets)
             for i in range(n_assets):
-                if np.random.random() < self._model_data.jump_intensity[i] * dt:
+                if np.random.random() < self._model_data.jump_intensity[i] * dt[t-1]:
                     jumps[i] = np.random.normal(
                         self._model_data.jump_mean[i],
                         self._model_data.jump_std[i]

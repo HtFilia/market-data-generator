@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 import numpy as np
+from .day_count import DayCountConvention, get_day_count_convention
 
 
 @dataclass
@@ -19,6 +20,7 @@ class MarketDescription:
     n_assets: int
     sectors: List[str]
     geographical_areas: List[str]
+    day_count_convention: str = "ACT/365"  # Default to ACT/365
     seed: Optional[int] = None
 
     def __post_init__(self):
@@ -42,6 +44,9 @@ class MarketDescription:
             )
             for i in range(self.n_assets)
         ]
+        
+        # Initialize day count convention
+        self._day_count = get_day_count_convention(self.day_count_convention)
 
     def get_asset_metadata(self) -> List[Dict[str, str]]:
         """Get metadata about assets including their sectors and geographical areas."""
@@ -49,3 +54,8 @@ class MarketDescription:
             {"id": asset.id, "sector": asset.sector, "geography": asset.geography}
             for asset in self.assets
         ]
+        
+    @property
+    def day_count(self) -> DayCountConvention:
+        """Get the day count convention instance."""
+        return self._day_count

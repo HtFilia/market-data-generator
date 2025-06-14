@@ -93,7 +93,11 @@ class BlackScholesModel(MarketModel[BlackScholesData]):
         if n_dates == 0:
             return self._model_data.initial_prices.reshape(1, -1)
 
-        dt = 1 / 252  # Assuming daily simulation
+        # Calculate time steps using day count convention
+        dt = np.array([
+            self.market_description.day_count.year_fraction(dates[i-1], dates[i])
+            for i in range(1, n_dates)
+        ])
 
         # Generate correlated Brownian motions
         z = np.random.normal(0, 1, (n_dates, n_assets))
@@ -104,8 +108,8 @@ class BlackScholesModel(MarketModel[BlackScholesData]):
         paths[0] = self._model_data.initial_prices
 
         for t in range(1, n_dates):
-            drift = -0.5 * self._model_data.volatility**2 * dt
-            diffusion = self._model_data.volatility * np.sqrt(dt)
+            drift = -0.5 * self._model_data.volatility**2 * dt[t-1]
+            diffusion = self._model_data.volatility * np.sqrt(dt[t-1])
             paths[t] = paths[t - 1] * np.exp(drift + diffusion * z[t])
 
         return paths

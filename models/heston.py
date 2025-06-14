@@ -117,7 +117,11 @@ class HestonModel(MarketModel[HestonData]):
         if n_dates == 0:
             return self._model_data.initial_prices.reshape(1, -1)
 
-        dt = 1 / 252  # Assuming daily simulation
+        # Calculate time steps using day count convention
+        dt = np.array([
+            self.market_description.day_count.year_fraction(dates[i-1], dates[i])
+            for i in range(1, n_dates)
+        ])
 
         # Generate correlated Brownian motions for prices
         z1 = np.random.normal(0, 1, (n_dates, n_assets))
@@ -145,12 +149,12 @@ class HestonModel(MarketModel[HestonData]):
             vol_drift = (
                 self._model_data.mean_reversion_speed
                 * (self._model_data.long_term_volatility - volatility[t - 1])
-                * dt
+                * dt[t-1]
             )
             vol_diffusion = (
                 self._model_data.vol_of_vol
                 * np.sqrt(volatility[t - 1])
-                * np.sqrt(dt)
+                * np.sqrt(dt[t-1])
                 * z2[t]
             )
             volatility[t] = np.maximum(
@@ -158,8 +162,8 @@ class HestonModel(MarketModel[HestonData]):
             )
 
             # Update prices using Heston dynamics
-            price_drift = -0.5 * volatility[t] * dt
-            price_diffusion = np.sqrt(volatility[t]) * np.sqrt(dt) * z1[t]
+            price_drift = -0.5 * volatility[t] * dt[t-1]
+            price_diffusion = np.sqrt(volatility[t]) * np.sqrt(dt[t-1]) * z1[t]
             paths[t] = paths[t - 1] * np.exp(price_drift + price_diffusion)
 
         return paths
